@@ -1,0 +1,159 @@
+#include <SoftwareSerial.h>
+SoftwareSerial bluetooth(7, 6); // RX, TX
+
+// Motor pins
+#define MLa 8
+#define MLb 9
+#define MRa 10
+#define MRb 11
+
+// Joystick pins
+#define VRx A0
+#define VRy A1
+#define SW A2   // Joystick button for mode switching
+
+// Ultrasonic sensor pins
+#define trigPin 12
+#define echoPin A3
+
+// Buzzer pin
+#define buzzer 4
+
+// Variables
+char t;
+bool btMode = false;  // false = Joystick mode, true = Bluetooth mode
+int lastButtonState = HIGH;
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 300;
+const int deadZone = 200;
+const int safeDistance = 20; // ← updated obstacle distance (in cm)
+
+unsigned long lastBeepTime = 0;
+bool buzzerState = false;
+
+void setup() {
+  Serial.begin(9600);
+  bluetooth.begin(9600);
+
+  // Motor pins
+  pinMode(MLa, OUTPUT);
+  pinMode(MLb, OUTPUT);
+  pinMode(MRa, OUTPUT);
+  pinMode(MRb, OUTPUT);
+
+  // Joystick and sensor pins
+  pinMode(SW, INPUT_PULLUP);
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+  pinMode(buzzer, OUTPUT);
+
+  digitalWrite(buzzer, LOW);
+
+  Serial.println("System Ready: Start in JOYSTICK mode");
+}
+
+void loop() {
+  // --- Mode switching ---
+  int reading = digitalRead(SW);
+  if (reading == LOW && lastButtonState == HIGH && (millis() - lastDebounceTime) > debounceDelay) {
+    btMode = !btMode; // Toggle control mode
+    Serial.println(btMode ? "Mode: BLUETOOTH" : "Mode: JOYSTICK");
+    lastDebounceTime = millis();
+  }
+  lastButtonState = reading;
+
+  // --- Obstacle detection ---
+  long distance = getDistance();
+  bool obstacleDetected = (distance <= safeDistance && distance > 0);
+
+  // --- Buzzer beep pattern ---
+  if (obstacleDetected) {
+    if (millis() - lastBeepTime > 200) {  // beep every 200ms
+      buzzerState = !buzzerState;
+      digitalWrite(buzzer, buzzerState);
+      lastBeepTime = millis();
+    }
+  } else {
+    digitalWrite(buzzer, LOW);
+  }
+
+  // --- Bluetooth Mode ---
+  if (btMode) {
+    if (bluetooth.available() > 0) {
+      t = bluetooth.read();
+      Serial.print("BT: "); Serial.println(t);
+
+      switch (t) {
+        case 'F':
+          if (!obstacleDetected) forward();  // Only move forward if no obstacle
+          else stopMotors();
+          break;
+        case 'B': backward(); break;
+        case 'L': left(); break;
+        case 'R': right(); break;
+        case 'S': stopMotors(); break;
+      }
+    }
+  }
+
+  // --- Joystick Mode ---
+  else {
+    int xValue = analogRead(VRx);
+    int yValue = analogRead(VRy);
+
+    if (yValue > (512 + deadZone) && !obstacleDetected) forward();  // forward blocked if obstacle
+    else if (yValue < (512 - deadZone)) backward();
+    else if (xValue > (512 + deadZone)) right();
+    else if (xValue < (512 - deadZone)) left();
+    else stopMotors();
+  }
+}
+
+// ---------------- Motor Functions ----------------
+void forward() {
+  digitalWrite(MLa, LOW);
+  digitalWrite(MLb, HIGH);
+  digitalWrite(MRa, LOW);
+  digitalWrite(MRb, HIGH);
+}
+
+void backward() {
+  digitalWrite(MLa, HIGH);
+  digitalWrite(MLb, LOW);
+  digitalWrite(MRa, HIGH);
+  digitalWrite(MRb, LOW);
+}
+
+void left() {
+  digitalWrite(MLa, LOW);
+  digitalWrite(MLb, HIGH);
+  digitalWrite(MRa, LOW);
+  digitalWrite(MRb, LOW);
+}
+
+void right() {
+  digitalWrite(MLa, LOW);
+  digitalWrite(MLb, LOW);
+  digitalWrite(MRa, LOW);
+  digitalWrite(MRb, HIGH);
+}
+
+void stopMotors() {
+  digitalWrite(MLa, LOW);
+  digitalWrite(MLb, LOW);
+  digitalWrite(MRa, LOW);
+  digitalWrite(MRb, LOW);
+}
+
+// ---------------- Ultrasonic Distance Function ----------------
+long getDistance() {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  long duration = pulseIn(echoPin, HIGH, 20000); // Timeout after 20ms
+  long distance = duration * 0.034 / 2;
+  return distance; // in cm
+}
